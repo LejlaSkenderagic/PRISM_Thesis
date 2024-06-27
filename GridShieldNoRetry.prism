@@ -1,0 +1,131 @@
+mdp
+
+// Constants and Parameters
+const int budget = 200; // total budget available for the attacker
+const double p_replay = 0.9; // probability of a successful replay attack
+const double p_failed_detect = 0.2; // probability that a receiver fails to detect a replay attack
+const double p_replay_detected = 0.8; // probability that a receiver detects the replay attack
+const double p_command_fail = 0.09; // probability of command fail for each receiver
+const double p_jam = 0.4; // probability of a successful jamming attack
+const double p_human_error = 0.003; // probability of human error affecting all receivers
+const double p_bug = 0.0008; // probability of a bug affecting all receivers
+const double p_insider = 0.35; // probability of a successful insider attack
+
+const int cost_replay = 3; // cost of performing a replay attack
+const int cost_jam = 5; // cost of performing a jamming attack
+const int cost_insider = 15; // cost of performing an insider attack
+const int step_penalty = 1; // penalty cost for each step/action taken
+
+// State Variables
+module attack
+
+    // Budget left for the attacker
+    budget_left : [0..budget] init budget;
+    // Boolean variables indicating if each receiver is compromised
+    receiver1_compromised : bool init false;
+    receiver2_compromised : bool init false;
+    receiver3_compromised : bool init false;
+    // System state: 0 = ongoing, 1 = system breached, 2 = system not breached
+    system_state : [0..2] init 0;
+    // Boolean variables indicating if each fault has been checked
+    command_fail_checked_1 : bool init false;
+    command_fail_checked_2 : bool init false;
+    command_fail_checked_3 : bool init false;
+    human_error_checked : bool init false;
+    bug_checked : bool init false;
+
+    // Replay attack action affecting all receivers
+    [replay_attack] budget_left >= cost_replay + step_penalty & system_state = 0 -> 
+    (p_failed_detect * p_failed_detect * p_failed_detect) : (budget_left' = budget_left - cost_replay - step_penalty) & 
+        (receiver1_compromised' = true) & (receiver2_compromised' = true) & (receiver3_compromised' = true) +
+    ((1 - (p_failed_detect * p_failed_detect * p_failed_detect))) : (system_state' = 2);
+
+    // Jamming attack on receiver 1
+    [jam_command_1] !receiver1_compromised & budget_left >= cost_jam + step_penalty & system_state = 0 -> 
+         p_jam : (budget_left' = budget_left - cost_jam - step_penalty) & (receiver1_compromised' = true) + 
+    (1 - p_jam) : (system_state' = 2);
+
+    // Jamming attack on receiver 2
+    [jam_command_2] !receiver2_compromised & budget_left >= cost_jam + step_penalty & system_state = 0 -> 
+         p_jam : (budget_left' = budget_left - cost_jam - step_penalty) & (receiver2_compromised' = true) + 
+    (1 - p_jam) : (system_state' = 2);
+
+    // Jamming attack on receiver 3
+    [jam_command_3] !receiver3_compromised & budget_left >= cost_jam + step_penalty & system_state = 0 -> 
+         p_jam : (budget_left' = budget_left - cost_jam - step_penalty) & (receiver3_compromised' = true) + 
+    (1 - p_jam) : (system_state' = 2);
+
+    // Insider attack action
+    [insider_attack] budget_left >= cost_insider + step_penalty & system_state = 0 -> 
+    // Successful insider attack that compromises all receivers
+    p_insider : (budget_left' = budget_left - cost_insider - step_penalty) & 
+                (receiver1_compromised' = true) & (receiver2_compromised' = true) & 
+                (receiver3_compromised' = true) & (system_state' = 1) + 
+    // Failed insider attack
+    (1 - p_insider) : (system_state' = 2);
+
+    // Spontaneous fault transitions
+    [fault_command_fail_1] system_state = 0 & !receiver1_compromised & !command_fail_checked_1 -> 
+        p_command_fail : (receiver1_compromised' = true) & (command_fail_checked_1' = true) + 
+        (1 - p_command_fail) : (command_fail_checked_1' = true);
+    
+    [fault_command_fail_2] system_state = 0 & !receiver2_compromised & !command_fail_checked_2 -> 
+        p_command_fail : (receiver2_compromised' = true) & (command_fail_checked_2' = true) + 
+        (1 - p_command_fail) : (command_fail_checked_2' = true);
+
+    [fault_command_fail_3] system_state = 0 & !receiver3_compromised & !command_fail_checked_3 -> 
+        p_command_fail : (receiver3_compromised' = true) & (command_fail_checked_3' = true) + 
+        (1 - p_command_fail) : (command_fail_checked_3' = true);
+
+    [fault_human_error] system_state = 0 & !human_error_checked -> 
+        p_human_error : (receiver1_compromised' = true) & (receiver2_compromised' = true) & 
+                        (receiver3_compromised' = true) & (system_state' = 1) & (human_error_checked' = true) + 
+        (1 - p_human_error) : (human_error_checked' = true);
+
+    [fault_bug] system_state = 0 & !bug_checked -> 
+        p_bug : (receiver1_compromised' = true) & (receiver2_compromised' = true) & 
+                (receiver3_compromised' = true) & (system_state' = 1) & (bug_checked' = true) + 
+        (1 - p_bug) : (bug_checked' = true);
+
+    // Explicit transition to system breached state
+    [] (receiver1_compromised & receiver2_compromised & receiver3_compromised) -> (system_state' = 1);
+
+    // Transition to absorbing state when the budget is exhausted without compromising all receivers
+    [system_not_breached] budget_left <= 0 & (!receiver1_compromised | !receiver2_compromised | !receiver3_compromised) -> (system_state' = 2);
+
+    // Transition to absorbing state when no further attacks are possible
+    [system_not_breached] (budget_left < (cost_replay + step_penalty) & budget_left < (cost_jam + step_penalty) & budget_left < (cost_insider + step_penalty)) & 
+       (!receiver1_compromised | !receiver2_compromised | !receiver3_compromised) -> (system_state' = 2);
+
+    [] (system_state = 1) -> (system_state' = 1); // Absorbing state for breached system
+    [] (system_state = 2) -> (system_state' = 2); // Absorbing state for not breached system
+
+endmodule
+
+// Labels for checking system states and fault occurrences
+label "system_breached" = (receiver1_compromised & receiver2_compromised & receiver3_compromised);
+label "system_not_breached" = (system_state = 2);
+
+// Labels for checking if specific faults have been checked
+label "command_fail_1_checked" = command_fail_checked_1;
+label "command_fail_2_checked" = command_fail_checked_2;
+label "command_fail_3_checked" = command_fail_checked_3;
+label "human_error_checked" = human_error_checked;
+label "bug_checked" = bug_checked;
+
+// Labels for checking if specific faults have occurred
+label "command_fail_1_occurred" = (command_fail_checked_1 & receiver1_compromised);
+label "command_fail_2_occurred" = (command_fail_checked_2 & receiver2_compromised);
+label "command_fail_3_occurred" = (command_fail_checked_3 & receiver3_compromised);
+label "human_error_occurred" = (human_error_checked & receiver1_compromised & receiver2_compromised & receiver3_compromised);
+label "bug_occurred" = (bug_checked & receiver1_compromised & receiver2_compromised & receiver3_compromised);
+
+// Rewards to track budget usage and penalties
+rewards "budget_used"
+    true : budget - budget_left;
+endrewards
+
+// Reward structure for step penalties
+rewards "step_penalty"
+    true : step_penalty;
+endrewards
